@@ -7,56 +7,75 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Download Paper 1.8.8 build 445 (direct URL)
+      - name: Download Paper 1.8.8 build 445
         run: |
           curl -fL -o paper.jar \
             "https://fill-data.papermc.io/v1/objects/7ff6d2cec671ef0d95b3723b5c92890118fb882d73b7f8fa0a2cd31d97c55f86/paper-1.8.8-445.jar"
           ls -la paper.jar
 
-      - name: Extract jar
+      - name: Extract
         run: |
-          mkdir -p extracted
+          mkdir extracted
           cd extracted
           unzip -q ../paper.jar
           rm -f META-INF/*.SF META-INF/*.RSA META-INF/*.DSA
 
-      - name: Patch brand name (Paper/PaperSpigot -> MineStormSoftware)
+      - name: Patch text files (MANIFEST.MF, Properties, JSON)
+        # This step fixes the /ver command by updating the text configuration files
+        run: |
+          find extracted -type f \( -name "MANIFEST.MF" -o -name "*.properties" -o -name "*.json" -o -name "*.yml" -o -name "*.txt" \) -exec sed -i 's/git-PaperSpigot-445/git-MineStormSoftware-445/g; s/PaperSpigot/MineStormSoftware/g; s/Paper/MineStormSoftware/g' {} +
+
+      - name: Patch brand names in .class files
+        # This step fixes the F3 debug screen brand
         run: |
           cat > /tmp/patch.py << 'PYEOF'
           import struct, os
 
-          def patch_utf8(data, old_str, new_str):
-              old_bytes = old_str.encode('utf-8')
-              new_bytes = new_str.encode('utf-8')
-              pattern = bytes([1]) + struct.pack('>H', len(old_bytes)) + old_bytes
-              replacement = bytes([1]) + struct.pack('>H', len(new_bytes)) + new_bytes
-              return data.replace(pattern, replacement)
+          def utf8_constants_with_offsets(data):
+              result = []
+              if len(data) < 10 or data[:4] != b'\xca\xfe\xba\xbe': return result
+              cp = struct.unpack('>H', data[8:10])[0]
+              off, i = 10, 1
+              while i < cp and off + 3 <= len(data):
+                  tag = data[off]
+                  if tag == 1:
+                      ln = struct.unpack('>H', data[off+1:off+3])[0]
+                      try: s = data[off+3:off+3+ln].decode('utf-8')
+                      except: s = None
+                      result.append((off, ln, s))
+                      off += 3 + ln
+                  elif tag in (7,8,16,19,20): off += 3
+                  elif tag == 15: off += 4
+                  elif tag in (3,4,9,10,11,12,17,18): off += 5
+                  elif tag in (5,6): off += 9; i += 1
+                  else: return result
+                  i += 1
+              return result
 
-          def patch_file(path, old_str, new_str):
-              with open(path, 'rb') as f:
-                  data = f.read()
-              new_data = patch_utf8(data, old_str, new_str)
-              if new_data != data:
-                  with open(path, 'wb') as f:
-                      f.write(new_data)
-                  return True
-              return False
+          replacements = {
+              "git-PaperSpigot-445": "git-MineStormSoftware-445",
+              "PaperSpigot":         "MineStormSoftware",
+              "Paper":               "MineStormSoftware",
+          }
 
-          count = 0
-          for dirpath, _, filenames in os.walk('extracted'):
-              for fn in filenames:
-                  if fn.endswith('.class'):
-                      path = os.path.join(dirpath, fn)
-                      if patch_file(path, 'PaperSpigot', 'MineStormSoftware'):
-                          print(f'Patched PaperSpigot -> {path}')
-                          count += 1
-                      if patch_file(path, 'Paper', 'MineStormSoftware'):
-                          print(f'Patched Paper -> {path}')
-                          count += 1
-          print(f'Total patches: {count}')
+          total = 0
+          for dp, _, fns in os.walk('extracted'):
+              for fn in fns:
+                  if not fn.endswith('.class'): continue
+                  path = os.path.join(dp, fn)
+                  with open(path, 'rb') as f: data = f.read()
+                  consts = utf8_constants_with_offsets(data)
+                  changes = [(o, l, replacements[s].encode('utf-8'))
+                             for o, l, s in consts if s in replacements]
+                  if not changes: continue
+                  for o, l, nb in sorted(changes, key=lambda x: -x[0]):
+                      data = data[:o+1] + struct.pack('>H', len(nb)) + nb + data[o+3+l:]
+                  with open(path, 'wb') as f: f.write(data)
+                  print(f'Patched {len(changes)} constant(s) in {path}')
+                  total += len(changes)
+          print(f'TOTAL: {total} constants patched')
           PYEOF
           python3 /tmp/patch.py
 
@@ -67,8 +86,7 @@ jobs:
           cd ..
           ls -la MineStormSoftware.jar
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: MineStormSoftware
           path: MineStormSoftware.jar
