@@ -10,12 +10,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download Paper 1.8.8
+      - name: Download Paper 1.8.8 build 445 (direct URL)
         run: |
-          BUILD=$(curl -s https://api.papermc.io/v2/projects/paper/versions/1.8.8 | jq -r '.builds[-1]')
-          echo "Using build: $BUILD"
           curl -fL -o paper.jar \
-            "https://api.papermc.io/v2/projects/paper/versions/1.8.8/builds/${BUILD}/downloads/paper-1.8.8-${BUILD}.jar"
+            "https://fill-data.papermc.io/v1/objects/7ff6d2cec671ef0d95b3723b5c92890118fb882d73b7f8fa0a2cd31d97c55f86/paper-1.8.8-445.jar"
           ls -la paper.jar
 
       - name: Extract jar
@@ -23,18 +21,16 @@ jobs:
           mkdir -p extracted
           cd extracted
           unzip -q ../paper.jar
-          # حذف امضای دیجیتال تا jar بعد از تغییر خراب نشه
           rm -f META-INF/*.SF META-INF/*.RSA META-INF/*.DSA
 
-      - name: Patch brand name (Paper -> MineStormSoftware)
+      - name: Patch brand name (Paper/PaperSpigot -> MineStormSoftware)
         run: |
           cat > /tmp/patch.py << 'PYEOF'
-          import sys, struct, os
+          import struct, os
 
           def patch_utf8(data, old_str, new_str):
               old_bytes = old_str.encode('utf-8')
               new_bytes = new_str.encode('utf-8')
-              # CONSTANT_Utf8: tag(1) + length(2, big-endian) + bytes
               pattern = bytes([1]) + struct.pack('>H', len(old_bytes)) + old_bytes
               replacement = bytes([1]) + struct.pack('>H', len(new_bytes)) + new_bytes
               return data.replace(pattern, replacement)
