@@ -1,0 +1,78 @@
+name: Build MineStormSoftware (Paper 1.8.8)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Paper 1.8.8
+        run: |
+          BUILD=$(curl -s https://api.papermc.io/v2/projects/paper/versions/1.8.8 | jq -r '.builds[-1]')
+          echo "Using build: $BUILD"
+          curl -fL -o paper.jar \
+            "https://api.papermc.io/v2/projects/paper/versions/1.8.8/builds/${BUILD}/downloads/paper-1.8.8-${BUILD}.jar"
+          ls -la paper.jar
+
+      - name: Extract jar
+        run: |
+          mkdir -p extracted
+          cd extracted
+          unzip -q ../paper.jar
+          # حذف امضای دیجیتال تا jar بعد از تغییر خراب نشه
+          rm -f META-INF/*.SF META-INF/*.RSA META-INF/*.DSA
+
+      - name: Patch brand name (Paper -> MineStormSoftware)
+        run: |
+          cat > /tmp/patch.py << 'PYEOF'
+          import sys, struct, os
+
+          def patch_utf8(data, old_str, new_str):
+              old_bytes = old_str.encode('utf-8')
+              new_bytes = new_str.encode('utf-8')
+              # CONSTANT_Utf8: tag(1) + length(2, big-endian) + bytes
+              pattern = bytes([1]) + struct.pack('>H', len(old_bytes)) + old_bytes
+              replacement = bytes([1]) + struct.pack('>H', len(new_bytes)) + new_bytes
+              return data.replace(pattern, replacement)
+
+          def patch_file(path, old_str, new_str):
+              with open(path, 'rb') as f:
+                  data = f.read()
+              new_data = patch_utf8(data, old_str, new_str)
+              if new_data != data:
+                  with open(path, 'wb') as f:
+                      f.write(new_data)
+                  return True
+              return False
+
+          count = 0
+          for dirpath, _, filenames in os.walk('extracted'):
+              for fn in filenames:
+                  if fn.endswith('.class'):
+                      path = os.path.join(dirpath, fn)
+                      if patch_file(path, 'PaperSpigot', 'MineStormSoftware'):
+                          print(f'Patched PaperSpigot -> {path}')
+                          count += 1
+                      if patch_file(path, 'Paper', 'MineStormSoftware'):
+                          print(f'Patched Paper -> {path}')
+                          count += 1
+          print(f'Total patches: {count}')
+          PYEOF
+          python3 /tmp/patch.py
+
+      - name: Repackage as MineStormSoftware.jar
+        run: |
+          cd extracted
+          zip -qr ../MineStormSoftware.jar .
+          cd ..
+          ls -la MineStormSoftware.jar
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MineStormSoftware
+          path: MineStormSoftware.jar
