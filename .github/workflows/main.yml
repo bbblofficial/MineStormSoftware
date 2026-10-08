@@ -9,22 +9,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Java 8
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '8'
+
       - name: Download Paper 1.8.8 build 445
         run: |
           curl -fL -o paper.jar \
             "https://fill-data.papermc.io/v1/objects/7ff6d2cec671ef0d95b3723b5c92890118fb882d73b7f8fa0a2cd31d97c55f86/paper-1.8.8-445.jar"
-          ls -la paper.jar
 
-      - name: Extract
+      - name: Run Paperclip to generate the actual server jar
+        # This runs the installer once. It downloads vanilla and creates cache/patched_1.8.8.jar
+        run: |
+          java -jar paper.jar || true
+
+      - name: Extract the Actual Server Jar
         run: |
           mkdir extracted
           cd extracted
-          unzip -q ../paper.jar
+          # Find the generated jar inside the cache folder and extract it
+          JAR_PATH=$(find ../cache -name "patched*.jar" | head -n 1)
+          if [ -z "$JAR_PATH" ]; then
+            echo "Failed to find the generated server jar!"
+            exit 1
+          fi
+          echo "Extracting $JAR_PATH..."
+          unzip -q "$JAR_PATH"
           rm -f META-INF/*.SF META-INF/*.RSA META-INF/*.DSA
 
       - name: Patch text files (MANIFEST.MF, Properties, JSON)
         run: |
-          find extracted -type f \( -name "MANIFEST.MF" -o -name "*.properties" -o -name "*.json" -o -name "*.yml" -o -name "*.txt" \) -exec sed -i 's/git-PaperSpigot-/git-MineStormSoftware-/g; s/PaperSpigot/MineStormSoftware/g' {} +
+          find extracted -type f \( -name "MANIFEST.MF" -o -name "*.properties" -o -name "*.json" -o -name "*.yml" -o -name "*.txt" \) -exec sed -i 's/git-PaperSpigot-445/git-MineStormSoftware-445/g; s/PaperSpigot/MineStormSoftware/g' {} +
 
       - name: Patch brand names in .class files
         run: |
@@ -52,7 +69,6 @@ jobs:
                   i += 1
               return result
 
-          # Removed the generic "Paper" replacement to protect Paperclip and internal packages
           replacements = {
               "git-PaperSpigot-445": "git-MineStormSoftware-445",
               "PaperSpigot":         "MineStormSoftware"
